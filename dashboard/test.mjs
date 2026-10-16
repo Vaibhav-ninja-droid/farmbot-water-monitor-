@@ -1,0 +1,16 @@
+import assert from 'node:assert/strict';
+import {parseLine,presentation,FIELDS} from './dist/core.mjs';
+const packet=parseLine('205,2,1,0,300,0,0,0,-1,UNCONFIGURED,0,CONFIG,0');
+assert.equal(presentation(packet.row).kind,'warning');assert.match(presentation(packet.row).title,/too close/);
+const unconfigured=parseLine('12599,85,1,0,1707,0,0,0,-1,UNCONFIGURED,0,CONFIG,0').row;
+assert.equal(presentation(unconfigured).levelValid,false);assert.match(presentation(unconfigured).title,/not configured/);
+const valid=parseLine('900,6,1,0,1000,1000,500,50,0,VALID,1,READY,0').row;
+assert.equal(presentation(valid).allowed,true);assert.equal(presentation(valid,{},false).allowed,false);
+assert.equal(presentation({...valid,sample_age_ms:1000}).levelValid,false);
+assert.match(presentation({...valid,raw_mm:5000}).title,/No usable/);
+assert.equal(parseLine('garbage'),null);assert.equal(parseLine(FIELDS.join(',')).type,'header');
+assert.equal(parseLine('900,6,1,0,1000,1000,500,50,0,VALID,2,READY,0'),null);
+assert.equal(parseLine('900,6,1,0,1000,1000,500,50,0,<script>,1,READY,0'),null);
+const config=parseLine('# water-monitor,v1,sensor=HRXL,calibrated=0,height=0');assert.equal(config.config.calibrated,'0');
+assert.equal(parseLine('2026-10-16T00:00:00Z,1,900,6,1,0,1000,1000,500,50,0,VALID,1,READY,0',['host_receive_time_utc','session',...FIELDS]).row.raw_mm,1000);
+console.log('PASS: firmware/capture CSV parsing, configuration metadata, close/no-target warnings, depth validity, stale data and malformed input');

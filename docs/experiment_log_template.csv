@@ -1,0 +1,1 @@
+run_id,date_time_brisbane,experiment_id,sensor_model,sensor_serial,tank_id,mount_id,firmware_id,config_id,condition,reference_method,reference_uncertainty_mm,reference_depth_mm,added_volume_l,air_temperature_c,supply_voltage_v,log_file,photo_file,operator,notes

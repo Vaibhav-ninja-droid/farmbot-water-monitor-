@@ -1,0 +1,63 @@
+mainmenu "FarmBot water monitor"
+source "Kconfig.zephyr"
+menu "Water monitor configuration"
+choice WATER_SENSOR
+    prompt "Ultrasonic pulse encoding"
+    default WATER_SENSOR_HRXL
+config WATER_SENSOR_MB1000
+    bool "MB1000 (147 us/inch)"
+config WATER_SENSOR_HRXL
+    bool "HRXL WR/WRC (1 us/mm; verify exact model)"
+endchoice
+choice WATER_FILTER
+    prompt "Estimator for comparison experiments"
+    default WATER_FILTER_MEDIAN
+config WATER_FILTER_RAW
+    bool "Raw"
+config WATER_FILTER_MEAN
+    bool "Five-sample moving mean"
+config WATER_FILTER_MEDIAN
+    bool "Five-sample moving median"
+endchoice
+config WATER_CALIBRATED
+    bool "Measured geometry and sensor profile have been verified"
+    default n
+config WATER_SENSOR_HEIGHT_MM
+    int "Sensor face height above bottom datum (mm)"
+    range 0 10000
+    default 0
+config WATER_MAX_DEPTH_MM
+    int "Maximum operating water depth (mm)"
+    range 0 10000
+    default 0
+config WATER_MIN_DISTANCE_MM
+    int "Minimum usable distance / saturation boundary (mm)"
+    range 1 10000
+    default 300 if WATER_SENSOR_HRXL
+    default 153
+config WATER_MAX_DISTANCE_MM
+    int "Maximum usable sensor distance (mm)"
+    range 1 10000
+    default 5000 if WATER_SENSOR_HRXL
+    default 6450
+config WATER_OFFSET_MM
+    int "Measured additive distance correction (mm)"
+    range -1000 1000
+    default 0
+config WATER_TRIP_DEPTH_MM
+    int "Block at or below this depth (mm)"
+    range 0 10000
+    default 0
+config WATER_RESTART_DEPTH_MM
+    int "Restart confirmation depth (mm)"
+    range 0 10000
+    default 0
+config WATER_TIMEOUT_MS
+    int "Expire valid samples after (ms)"
+    range 100 10000
+    default 1000
+config WATER_RECOVERY_SAMPLES
+    int "Consecutive healthy restart samples"
+    range 5 1000
+    default 5
+endmenu

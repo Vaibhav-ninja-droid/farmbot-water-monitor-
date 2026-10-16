@@ -1,0 +1,7 @@
+description: Pulse width input from an external ultrasonic sensor
+compatible: "farmbot,sonar-pw"
+include: base.yaml
+properties:
+  gpios:
+    type: phandle-array
+    required: true
