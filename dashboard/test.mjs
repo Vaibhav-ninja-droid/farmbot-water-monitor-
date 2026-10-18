@@ -14,3 +14,37 @@ assert.equal(parseLine('900,6,1,0,1000,1000,500,50,0,<script>,1,READY,0'),null);
 const config=parseLine('# water-monitor,v1,sensor=HRXL,calibrated=0,height=0');assert.equal(config.config.calibrated,'0');
 assert.equal(parseLine('2026-10-16T00:00:00Z,1,900,6,1,0,1000,1000,500,50,0,VALID,1,READY,0',['host_receive_time_utc','session',...FIELDS]).row.raw_mm,1000);
 console.log('PASS: firmware/capture CSV parsing, configuration metadata, close/no-target warnings, depth validity, stale data and malformed input');
+
+const {validateCalibration,CalibrationPreview,generateConfig}=await import('./dist/calibration.mjs');
+const bucket={height:1000,max_depth:400,trip:100,restart:150};
+assert.deepEqual(validateCalibration(bucket).errors,[]);
+for(const c of [{...bucket,height:''},{...bucket,height:'1e3'},{...bucket,height:600},{...bucket,trip:150},{...bucket,restart:401}])assert.ok(validateCalibration(c).errors.length);
+assert.throws(()=>generateConfig({...bucket,height:'1000;evil()'}));
+assert.match(generateConfig(bucket),/c.calibrated = true;/);
+assert.match(generateConfig(bucket),/c.sensor_height_mm = 1000;/);
+const preview=new CalibrationPreview(bucket);
+const raw=d=>({...unconfigured,raw_mm:d,sample_event:1});
+for(let i=0;i<4;i++)preview.update(raw(800),i*150);
+assert.equal(preview.result.allowed,false);
+preview.update(raw(800),600);assert.equal(preview.result.depth,200);assert.equal(preview.result.percent,50);assert.equal(preview.result.allowed,true);
+preview.update(raw(900),750);assert.equal(preview.result.label,'LOW WATER');assert.equal(preview.result.allowed,false);
+preview.update(raw(880),900);assert.equal(preview.result.allowed,false);
+for(let i=0;i<5;i++)preview.update(raw(800),1050+i*150);
+assert.equal(preview.result.allowed,true);
+preview.tick(2650);assert.equal(preview.result.valid,false);
+preview.update(raw(800),2800);assert.equal(preview.result.allowed,false);
+preview.update(raw(300),2950);assert.equal(preview.result.valid,false);
+preview.update(raw(5000),3100);assert.equal(preview.result.valid,false);
+preview.update({...raw(800),sample_event:0,validity:'INVALID',reason:'CAPTURE'},3250);assert.equal(preview.result.valid,false);
+preview.reset();for(let i=0;i<5;i++)preview.update(raw(800),i*150);
+preview.update(raw(800),3000);assert.equal(preview.result.allowed,false); // gap must restart confirmation
+console.log('PASS: measured geometry validation, generated firmware settings, browser depth/percentage, low-water trip, hysteresis, recovery, invalid inputs and expiry');
+
+const {savedCalibrationMatches}=await import('./dist/calibration.mjs');
+const reported={usb_cal:'1',storage:'EEPROM',calibrated:'1',height:'1000',max_depth:'400',trip:'100',restart:'150'};
+assert.equal(savedCalibrationMatches(reported,bucket,true),true);
+assert.equal(savedCalibrationMatches(reported,bucket,false),false);
+assert.equal(savedCalibrationMatches({...reported,height:'999'},bucket,true),false);
+assert.equal(savedCalibrationMatches({...reported,storage:'DEFAULT'},bucket,true),false);
+assert.equal(savedCalibrationMatches({...reported,usb_cal:undefined},bucket,true),false);
+console.log('PASS: save confirmation requires acknowledgement, capability, EEPROM storage and all matching fields');

@@ -118,3 +118,6 @@ The former nRF52840/Zephyr files are preserved under `legacy/zephyr/`. Its build
 See [the thesis plan](THESIS_RECOVERY_PLAN.md) for experiments. Its original Zephyr discussion is historical; the active controller is now Uno. Record the controller change, Arduino/core version, build configuration and AI assistance accurately in your thesis.
 
 References: [Arduino Uno](https://docs.arduino.cc/hardware/uno-rev3/), [Arduino interrupts](https://docs.arduino.cc/language-reference/funktionen/external-interrupts/attachInterrupt), [HRXL datasheet](https://maxbotix.com/pages/hrxl-maxsonar-wr-datasheet).
+
+## Calibration saved over USB
+The current Uno sketch supports saving the four geometry/threshold values directly from the dashboard after one firmware upload. See [dashboard instructions](dashboard/README.md#direct-usb-calibration-one-time-firmware-update-required). Valid EEPROM geometry overrides config.h after reboot; replacing config.h alone does not override an existing saved calibration. Use the dashboard Save button to change saved values.

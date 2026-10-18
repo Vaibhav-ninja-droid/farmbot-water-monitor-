@@ -187,3 +187,11 @@ Next bench session:
 3. Measure actual tank geometry and minimum full-tank air gap.
 4. Capture the first labelled raw-data run with an independent reference.
 5. Establish what the irrigation controller will do with LOW, UNKNOWN and STALE messages.
+
+
+
+
+-------------------------
+
+python3 -m http.server 8765 --bind 127.0.0.1 --directory dashboard/dist
+-------------------------
