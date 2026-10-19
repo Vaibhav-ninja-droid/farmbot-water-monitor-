@@ -10,7 +10,8 @@ bool monitor_config_valid(const struct monitor_config *c)
         c->max_depth_mm > 0 && c->sensor_height_mm > c->max_depth_mm &&
         c->sensor_height_mm - c->max_depth_mm > c->min_distance_mm &&
         c->trip_depth_mm > 0 && c->trip_depth_mm < c->restart_depth_mm &&
-        c->restart_depth_mm <= c->max_depth_mm && c->timeout_ms > 0 &&
+        c->restart_depth_mm <= c->max_depth_mm &&
+        (!c->high_depth_mm || (c->high_depth_mm >= c->restart_depth_mm && c->high_depth_mm <= c->max_depth_mm)) && c->timeout_ms > 0 &&
         c->recovery_samples >= MONITOR_WINDOW && c->recovery_samples <= 1000;
 }
 bool monitor_distance(enum sensor_profile profile, uint32_t pulse_us, int32_t offset, uint32_t *mm)
@@ -34,6 +35,7 @@ void monitor_init(struct monitor *m, const struct monitor_config *c)
 }
 void monitor_fault(struct monitor *m, enum monitor_reason reason)
 {
+    m->high_water = false;
     m->allowed = false;
     m->count = m->index = m->recovery_count = 0;
     m->validity = m->config_ok ? MON_INVALID : MON_UNCONFIGURED;
@@ -123,6 +125,14 @@ static void accept_distance(struct monitor *m, uint32_t distance_mm, uint64_t sa
         m->allowed = m->recovery_count >= m->config.recovery_samples;
         m->reason = m->allowed ? REASON_READY : REASON_RECOVERING;
     } else m->reason = REASON_READY;
+    if(m->config.high_depth_mm){
+        uint32_t margin=m->config.max_depth_mm/20;if(!margin)margin=1;
+        uint32_t clear=m->config.high_depth_mm>margin?m->config.high_depth_mm-margin:0;
+        if(raw_depth>=m->config.high_depth_mm||m->depth_mm>=m->config.high_depth_mm)m->high_water=true;
+        else if(raw_depth<clear&&m->depth_mm<clear)m->high_water=false;
+        if(m->high_water&&m->reason!=REASON_LOW)m->reason=REASON_HIGH;
+    }
+
 }
 const char *monitor_validity_name(enum monitor_validity v)
 {
@@ -131,6 +141,6 @@ const char *monitor_validity_name(enum monitor_validity v)
 }
 const char *monitor_reason_name(enum monitor_reason r)
 {
-    static const char *names[] = {"STARTUP", "READY", "LOW", "RECOVERING", "RANGE", "PULSE", "TIMEOUT", "CONFIG", "CAPTURE"};
+    static const char *names[] = {"STARTUP", "READY", "LOW", "RECOVERING", "RANGE", "PULSE", "TIMEOUT", "CONFIG", "CAPTURE", "HIGH"};
     return (unsigned)r < sizeof(names)/sizeof(names[0]) ? names[r] : "CAPTURE";
 }

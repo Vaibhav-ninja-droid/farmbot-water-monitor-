@@ -4,6 +4,7 @@
 #include <util/atomic.h>
 #include "config.h"
 #include "src/hrxl_serial.h"
+#include "lcd_display.h"
 #if WATER_USE_HRXL_SERIAL
 #include <SoftwareSerial.h>
 static SoftwareSerial sensorSerial(SENSOR_SERIAL_RX_PIN, SENSOR_SERIAL_UNUSED_TX_PIN);
@@ -69,13 +70,14 @@ static void printConfig(const monitor_config &c) {
     Serial.print(c.sensor == SENSOR_HRXL ? F("HRXL") : F("MB1000"));
     Serial.print(F(",input="));
     Serial.print(WATER_USE_HRXL_SERIAL ? F("TTL_SERIAL_D8") : F("PULSE_D2"));
-    Serial.print(F(",usb_cal=1,storage="));Serial.print(savedCalibration?F("EEPROM"):F("DEFAULT"));
+    Serial.print(F(",usb_cal=2,storage="));Serial.print(savedCalibration?F("EEPROM"):F("DEFAULT"));
     Serial.print(F(",filter=")); Serial.print((int)c.filter);
     Serial.print(F(",calibrated=")); Serial.print(c.calibrated ? 1 : 0);
     Serial.print(F(",height=")); Serial.print(c.sensor_height_mm);
     Serial.print(F(",max_depth=")); Serial.print(c.max_depth_mm);
     Serial.print(F(",trip=")); Serial.print(c.trip_depth_mm);
     Serial.print(F(",restart=")); Serial.print(c.restart_depth_mm);
+    Serial.print(F(",high="));Serial.print(c.high_depth_mm);
     Serial.print(F(",min_distance=")); Serial.print(c.min_distance_mm);
     Serial.print(F(",max_distance=")); Serial.print(c.max_distance_mm);
     Serial.print(F(",offset=")); Serial.print(c.offset_mm);
@@ -83,11 +85,11 @@ static void printConfig(const monitor_config &c) {
     Serial.print(F(",recovery=")); Serial.println(c.recovery_samples);
 }
 static bool loadCalibration(monitor_config &c) {
-    uint8_t bytes[CAL_RECORD_SIZE];uint16_t v[4];
+    uint8_t bytes[CAL_RECORD_SIZE];uint16_t v[5];
     for(uint8_t i=0;i<CAL_RECORD_SIZE;i++)bytes[i]=EEPROM.read(i);
-    if(!cal_decode(bytes,v))return false;
+    if(!cal_decode(bytes,v)&&!cal_decode_v1(bytes,v))return false;
     monitor_config candidate=c;
-    candidate.sensor_height_mm=v[0];candidate.max_depth_mm=v[1];candidate.trip_depth_mm=v[2];candidate.restart_depth_mm=v[3];candidate.calibrated=true;
+    candidate.sensor_height_mm=v[0];candidate.max_depth_mm=v[1];candidate.trip_depth_mm=v[2];candidate.restart_depth_mm=v[3];candidate.high_depth_mm=v[4];candidate.calibrated=true;
     if(!monitor_config_valid(&candidate))return false;
     c=candidate;return true;
 }
@@ -103,11 +105,11 @@ static void usbCommands() {
         if(overflow)Serial.println(F("# cal,error,TOO_LONG"));
         else if(!strcmp(line,"CAL?"))printConfig(state.config);
         else if(!strncmp(line,"CAL,SAVE,",9)) {
-            uint16_t v[4];
+            uint16_t v[5];
             if(!cal_parse(line+9,v))Serial.println(F("# cal,error,INVALID_GEOMETRY"));
             else {
                 monitor_config candidate=state.config;
-                candidate.sensor_height_mm=v[0];candidate.max_depth_mm=v[1];candidate.trip_depth_mm=v[2];candidate.restart_depth_mm=v[3];candidate.calibrated=true;
+                candidate.sensor_height_mm=v[0];candidate.max_depth_mm=v[1];candidate.trip_depth_mm=v[2];candidate.restart_depth_mm=v[3];candidate.high_depth_mm=v[4];candidate.calibrated=true;
                 if(!monitor_config_valid(&candidate))Serial.println(F("# cal,error,INVALID_CONFIG"));
                 else {
                     digitalWrite(PERMISSION_LED_PIN,LOW);
@@ -117,7 +119,7 @@ static void usbCommands() {
                     bool same=true;for(uint8_t i=0;i<CAL_RECORD_SIZE;i++)if(EEPROM.read(i)!=bytes[i])same=false;
                     if(!same){EEPROM.update(0,0);for(uint8_t i=1;i<CAL_RECORD_SIZE;i++)EEPROM.update(i,bytes[i]);EEPROM.update(0,bytes[0]);}
                     monitor_config verified=state.config;
-                    if(!loadCalibration(verified)||verified.sensor_height_mm!=v[0]||verified.max_depth_mm!=v[1]||verified.trip_depth_mm!=v[2]||verified.restart_depth_mm!=v[3])Serial.println(F("# cal,error,EEPROM_VERIFY"));
+                    if(!loadCalibration(verified)||verified.sensor_height_mm!=v[0]||verified.max_depth_mm!=v[1]||verified.trip_depth_mm!=v[2]||verified.restart_depth_mm!=v[3]||verified.high_depth_mm!=v[4])Serial.println(F("# cal,error,EEPROM_VERIFY"));
                     else {
                         digitalWrite(PERMISSION_LED_PIN,LOW);
                         monitor_init(&state,&verified);savedCalibration=true;
@@ -137,6 +139,7 @@ void setup() {
     monitor_config c = water_config();
     savedCalibration=loadCalibration(c);
     monitor_init(&state, &c);
+    lcdBegin();
     previousMillis = millis();
 #if WATER_USE_HRXL_SERIAL
     sensorSerial.begin(9600); // MB7389 is non-inverted TTL, 9600-8-N-1.
@@ -210,6 +213,7 @@ void loop() {
     if (drops != previousOverruns) monitor_fault(&state, REASON_CAPTURE);
     previousOverruns = drops;
     digitalWrite(PERMISSION_LED_PIN, state.allowed ? HIGH : LOW);
+    lcdUpdate(state);
     if (event || now - lastLog >= HEARTBEAT_MS || sequence == 0) {
         logRow(event, now, drops);
         lastLog = now;

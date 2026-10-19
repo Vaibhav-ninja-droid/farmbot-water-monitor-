@@ -11,3 +11,5 @@ python3 -m unittest discover -s tests -p 'test_*.py'
 
 ${CC:-cc} -std=c11 -Wall -Wextra -Werror -fsanitize=address,undefined -g -I arduino/FarmbotWaterMonitor/src tests/test_calibration_store.c -o "$output_dir/test_calibration"
 "$output_dir/test_calibration"
+${CC:-cc} -std=c11 -Wall -Wextra -Werror -fsanitize=address,undefined -g -I arduino/FarmbotWaterMonitor/src arduino/FarmbotWaterMonitor/src/lcd_status.c tests/test_lcd_status.c -o "$output_dir/test_lcd"
+"$output_dir/test_lcd"

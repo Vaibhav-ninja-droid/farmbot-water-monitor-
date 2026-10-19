@@ -8,7 +8,7 @@ enum sensor_profile { SENSOR_MB1000, SENSOR_HRXL };
 enum filter_mode { FILTER_RAW, FILTER_MEAN, FILTER_MEDIAN };
 enum monitor_validity { MON_UNKNOWN, MON_VALID, MON_INVALID, MON_STALE, MON_UNCONFIGURED };
 enum monitor_reason { REASON_STARTUP, REASON_READY, REASON_LOW, REASON_RECOVERING,
-    REASON_RANGE, REASON_PULSE, REASON_TIMEOUT, REASON_CONFIG, REASON_CAPTURE };
+    REASON_RANGE, REASON_PULSE, REASON_TIMEOUT, REASON_CONFIG, REASON_CAPTURE, REASON_HIGH };
 struct monitor_config {
     enum sensor_profile sensor;
     enum filter_mode filter;
@@ -16,14 +16,14 @@ struct monitor_config {
     uint32_t min_distance_mm, max_distance_mm;
     int32_t offset_mm;
     uint32_t sensor_height_mm, max_depth_mm;
-    uint32_t trip_depth_mm, restart_depth_mm;
+    uint32_t trip_depth_mm, restart_depth_mm, high_depth_mm;
     uint32_t timeout_ms, recovery_samples;
 };
 struct monitor {
     struct monitor_config config;
     uint32_t samples[MONITOR_WINDOW], count, index, recovery_count;
     uint64_t last_valid_ms;
-    bool have_valid, allowed, config_ok;
+    bool have_valid, allowed, config_ok, high_water;
     uint32_t pulse_us, raw_mm, filtered_mm, depth_mm, level_percent;
     enum monitor_validity validity;
     enum monitor_reason reason;

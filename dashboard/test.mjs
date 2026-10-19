@@ -16,7 +16,7 @@ assert.equal(parseLine('2026-10-16T00:00:00Z,1,900,6,1,0,1000,1000,500,50,0,VALI
 console.log('PASS: firmware/capture CSV parsing, configuration metadata, close/no-target warnings, depth validity, stale data and malformed input');
 
 const {validateCalibration,CalibrationPreview,generateConfig}=await import('./dist/calibration.mjs');
-const bucket={height:1000,max_depth:400,trip:100,restart:150};
+const bucket={height:1000,max_depth:400,trip:100,restart:150,high:350};
 assert.deepEqual(validateCalibration(bucket).errors,[]);
 for(const c of [{...bucket,height:''},{...bucket,height:'1e3'},{...bucket,height:600},{...bucket,trip:150},{...bucket,restart:401}])assert.ok(validateCalibration(c).errors.length);
 assert.throws(()=>generateConfig({...bucket,height:'1000;evil()'}));
@@ -41,10 +41,27 @@ preview.update(raw(800),3000);assert.equal(preview.result.allowed,false); // gap
 console.log('PASS: measured geometry validation, generated firmware settings, browser depth/percentage, low-water trip, hysteresis, recovery, invalid inputs and expiry');
 
 const {savedCalibrationMatches}=await import('./dist/calibration.mjs');
-const reported={usb_cal:'1',storage:'EEPROM',calibrated:'1',height:'1000',max_depth:'400',trip:'100',restart:'150'};
+const reported={usb_cal:'2',storage:'EEPROM',calibrated:'1',height:'1000',max_depth:'400',trip:'100',restart:'150',high:'350'};
 assert.equal(savedCalibrationMatches(reported,bucket,true),true);
 assert.equal(savedCalibrationMatches(reported,bucket,false),false);
 assert.equal(savedCalibrationMatches({...reported,height:'999'},bucket,true),false);
 assert.equal(savedCalibrationMatches({...reported,storage:'DEFAULT'},bucket,true),false);
 assert.equal(savedCalibrationMatches({...reported,usb_cal:undefined},bucket,true),false);
 console.log('PASS: save confirmation requires acknowledgement, capability, EEPROM storage and all matching fields');
+
+assert.ok(validateCalibration({...bucket,high:149}).errors.length);
+assert.ok(validateCalibration({...bucket,high:401}).errors.length);
+assert.match(generateConfig(bucket),/c.high_depth_mm = 350;/);
+const hp=new CalibrationPreview(bucket);
+for(let i=0;i<5;i++)hp.update(raw(800),i*150);
+hp.update(raw(650),750);assert.equal(hp.result.label,'HIGH WATER');assert.equal(hp.result.allowed,true);
+hp.update(raw(660),900);assert.equal(hp.result.label,'HIGH WATER');
+for(let i=0;i<5;i++)hp.update(raw(680),1050+i*150);
+assert.equal(hp.result.label,'Water available');
+hp.tick(3000);assert.equal(hp.result.valid,false);
+const highRow=parseLine('900,6,1,0,650,650,350,87,0,VALID,1,HIGH,0').row;
+assert.match(presentation(highRow).title,/HIGH WATER/);
+assert.equal(presentation(highRow).allowed,true);
+assert.equal(presentation(highRow,{},false).levelValid,false);
+assert.equal(savedCalibrationMatches({...reported,high:'340'},bucket,true),false);
+console.log('PASS: high warning validation, raw trip, clearing hysteresis, stale handling, parsing and save confirmation');

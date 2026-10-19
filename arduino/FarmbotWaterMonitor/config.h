@@ -26,6 +26,7 @@ static inline monitor_config water_config() {
     c.max_depth_mm = 0;
     c.trip_depth_mm = 0;
     c.restart_depth_mm = 0;
+    c.high_depth_mm = 0; // Set through dashboard calibration.
     c.timeout_ms = 1000;
     c.recovery_samples = 5;
     return c;

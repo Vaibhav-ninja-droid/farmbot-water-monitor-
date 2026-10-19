@@ -56,5 +56,13 @@ int main(void) {
     }
     c=cfg(); monitor_init(&m,&c); healthy(&m,150);
     monitor_fault(&m,REASON_CAPTURE); assert(!m.allowed && m.count==0);
+    c=cfg();c.high_depth_mm=900;monitor_init(&m,&c);healthy(&m,100);
+    monitor_distance_sample(&m,600,900,900);assert(m.reason==REASON_HIGH&&m.high_water&&m.allowed);
+    monitor_distance_sample(&m,620,1050,1050);assert(m.high_water); // 880 is inside clear band
+    for(int i=0;i<5;i++)monitor_distance_sample(&m,700,1200+i*150,1200+i*150);
+    assert(!m.high_water&&m.reason==REASON_READY&&m.allowed);
+    monitor_distance_sample(&m,550,2000,2000);assert(m.high_water); // 950 still valid
+    monitor_distance_sample(&m,499,2150,2150);assert(m.validity==MON_INVALID&&!m.high_water&&!m.allowed);
+    c.high_depth_mm=1001;assert(!monitor_config_valid(&c));c.high_depth_mm=299;assert(!monitor_config_valid(&c));
     puts("PASS: conversion, configuration, startup/recovery, raw trip, hysteresis, timeouts, invalid and stale inputs, filters");
 }

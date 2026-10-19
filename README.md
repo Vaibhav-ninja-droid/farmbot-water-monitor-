@@ -121,3 +121,6 @@ References: [Arduino Uno](https://docs.arduino.cc/hardware/uno-rev3/), [Arduino 
 
 ## Calibration saved over USB
 The current Uno sketch supports saving the four geometry/threshold values directly from the dashboard after one firmware upload. See [dashboard instructions](dashboard/README.md#direct-usb-calibration-one-time-firmware-update-required). Valid EEPROM geometry overrides config.h after reboot; replacing config.h alone does not override an existing saved calibration. Use the dashboard Save button to change saved values.
+
+## Local LCD
+The firmware now supports the pictured PCF8574 I2C LCD using built-in Wire. See [LCD wiring, upload and test instructions](docs/LCD_SETUP.md). Connect GND/GND, VCC/5V, SDA/A4, SCL/A5 with power off; share supply rails properly with the sensor. One updated firmware upload is required. Hardware display operation remains to be verified.
