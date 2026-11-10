@@ -1,7 +1,10 @@
 #include <zephyr/dt-bindings/gpio/gpio.h>
 / {
-    aliases { sonar-pw = &sonar_pw; };
-    sonar_pw: sonar-pw {
+    aliases {
+        sonar - pw = &sonar_pw;
+    };
+sonar_pw:
+    sonar - pw {
         compatible = "farmbot,sonar-pw";
         status = "okay";
         /* Existing project pin. Verify wiring before flashing. */

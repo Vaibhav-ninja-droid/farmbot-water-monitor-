@@ -86,7 +86,7 @@ Capture preserves complete console text in `run01.csv.console.txt`, adds UTC hos
 
 CSV fields are `uptime_ms,sequence,sample_event,pulse_us,raw_mm,filtered_mm,depth_mm,depth_percent,sample_age_ms,validity,permission,reason,capture_overruns`. Sample age means age of the last **accepted valid** sample. -1 means none. Heartbeats have `sample_event=0`. Processed depth/percent values on invalid/stale rows retain the previous estimate and must not be treated as current measurements. Use validity and permission together. Depth percent is relative to maximum operating depth, not volume percent.
 
-For error analysis, add an independently measured `reference_depth_mm` column to the captured file. The analysis tool excludes heartbeat and non-VALID rows from error statistics, and reports each session separately. It does not invent references, statistical independence, ground-truth crossing times or end-to-end actuation latency. Collect these in the experiment log and analyse repeated runs as described in [the research plan](THESIS_RECOVERY_PLAN.md).
+For error analysis, add an independently measured `reference_depth_mm` column to the captured file. The analysis tool excludes heartbeat and non-VALID rows from error statistics, and reports each session separately. It does not invent references, statistical independence, ground-truth crossing times or end-to-end actuation latency. Collect these in the [experiment log](../../docs/experiment_log_template.csv) and analyse repeated runs.
 
 ## Controller integration contract still needed
 

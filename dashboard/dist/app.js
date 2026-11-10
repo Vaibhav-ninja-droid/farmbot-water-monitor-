@@ -1,81 +1,689 @@
-import {validateCalibration,CalibrationPreview,generateConfig,savedCalibrationMatches} from './calibration.mjs?v=high-20261019';
-import {FIELDS,parseLine,presentation} from './core.mjs?v=high-20261019';
-let pendingSave=null,saveAck=false,usbWriting=false;
-const $=id=>document.getElementById(id);let calibration=null,calculation=null,calLastState='';let port=null,reader=null,readTask=null,closing=false,connecting=false;
-let rows=[],points=[],config={},header=null,latest=null,lastReceive=0,source='none',sampleTimer=null,events=[],lastKey='',session=0,rawLines=[],sampleEvents=0,importing=false,uiError='';
-$('date').textContent=new Intl.DateTimeFormat('en-AU',{day:'numeric',month:'short',year:'numeric'}).format(new Date());
-function event(text){if(importing)return;events.unshift({time:new Date().toLocaleTimeString('en-AU',{hour12:false}),text});events=events.slice(0,60);$('events').replaceChildren(...events.map(e=>{const el=document.createElement('div');el.className='event';const time=document.createElement('span');time.className='event-time';time.textContent=e.time;const dot=document.createElement('span');dot.className='event-dot';const text=document.createElement('span');text.textContent=e.text;el.append(time,dot,text);return el;}));}
-function emptyData(){calculation?.reset();events=[];$('events').replaceChildren();rows=[];points=[];config={};header=null;latest=null;lastReceive=0;lastKey='';sampleEvents=0;rawLines=[];session=0;}
-function ingest(line){
-  if(source==='live'&&line.trim()==='# cal,saved'&&pendingSave)saveAck=true;
-  if(source==='live'&&line.startsWith('# cal,error,'))finishSave('Arduino rejected calibration: '+line.slice(12));
-rawLines.push(line);rawLines=rawLines.slice(-18);$('raw').textContent=rawLines.join('\n');const packet=parseLine(line,header);if(!packet)return;if(packet.type==='header'){header=packet.header;return;}if(packet.type==='config'){
-if(pendingSave){const c=packet.config;if(savedCalibrationMatches(c,pendingSave.values,saveAck))finishSave('Saved to Arduino EEPROM and confirmed. Main readings and L LED now use these settings.');else finishSave('Save was not confirmed. Check active firmware settings and retry.');}
-config=packet.config;calculation?.reset();session++;points=[];latest=null;event('Active device configuration received · chart restarted.');render();return;}const row=packet.row;if(latest&&row.uptime_ms<latest.uptime_ms){session++;points=[];calculation?.reset();event('Device uptime reset · starting a new chart session.');}latest=row;lastReceive=Date.now();if(calculation)calculation.update(row,source==='live'?lastReceive:row.uptime_ms);rows.push({...row,host_receive_time_utc:new Date().toISOString(),session});if(rows.length>10000)rows.shift();if(row.sample_event){sampleEvents++;points.push(row);points=points.slice(-1200);}const key=[row.validity,row.reason,row.raw_mm<=Number(config.min_distance||300)?'close':row.raw_mm>Number(config.max_distance||4999)?'no-target':'range'].join('/');if(key!==lastKey){const p=presentation(row,config);event(p.title);lastKey=key;}render();}
-function render(){if(importing)return;renderCalibration();const fresh=source==='replay'||source==='sample'||source==='live'&&!!port&&!!lastReceive&&Date.now()-lastReceive<2000;const p=presentation(latest,config,fresh);$('notice').className='notice '+(p.kind==='good'||p.kind==='idle'?'':p.kind);$('notice-title').textContent=p.title;$('notice-text').textContent=p.text;if(uiError){$('notice-title').textContent='Connection needs attention';$('notice-text').textContent=uiError;}$('connection').textContent=source==='live'?(port?(fresh&&latest?'LIVE USB':'WAITING FOR DATA'):'DISCONNECTED'):source==='replay'?'RECORDED LOG':source==='sample'?'ILLUSTRATION':'DISCONNECTED';$('source-banner').hidden=!['replay','sample'].includes(source);$('source-banner').textContent=source==='sample'?'ILLUSTRATIVE DATA · Synthetic readings for exploring the interface. These are not your measurements.':'RECORDED LOG · Historical readings, not a live connection. Connect Arduino to resume live monitoring.';$('distance').textContent=latest?.raw_mm?latest.raw_mm.toLocaleString():'—';$('distance-note').textContent=!latest?'Waiting for a measurement':!fresh?'Last reported distance · live data expired':latest?.sample_event?'Distance from sensing face to target':'Waiting for a measurement';$('depth').textContent=p.levelValid?latest.depth_mm.toLocaleString():'—';$('depth-note').textContent=p.levelValid?'Accepted depth above the bottom datum':'No valid configured depth available';$('permission').textContent=!latest?'Not available':!fresh?'Unavailable':p.allowed?'Allowed':latest.validity==='UNCONFIGURED'?'Disabled':'Blocked';$('permission').className='metric-value word '+(p.allowed?'good':latest?'bad':'muted');$('age').textContent=latest&&latest.sample_age_ms>=0?latest.sample_age_ms.toLocaleString():'—';$('age-note').textContent=!latest?'Age of last firmware-accepted sample':fresh?'Age of last firmware-accepted sample':'Last reported age · live data expired';$('validity').textContent=latest?.validity||'NO DATA';$('level').textContent=p.levelValid?latest.depth_percent+'%':'—';$('level-label').textContent=p.levelValid?'OF MAXIMUM DEPTH':latest?.validity==='UNCONFIGURED'?'LEVEL NOT CONFIGURED':'NO VALID LEVEL';$('water').style.height=p.levelValid?latest.depth_percent+'%':'0%';$('tank-state').textContent=p.levelValid&&latest.reason==='HIGH'?'HIGH WATER':p.allowed?'Water available':!fresh&&latest?'Data unavailable':latest?.validity==='UNCONFIGURED'?'Calibration needed':p.levelValid?'Watering blocked':latest?'Check measurement':'Waiting for data';$('tank-description').textContent=p.levelValid?'Depth percentage describes water height, not litres. Permission is the local monitoring decision.':latest?.validity==='UNCONFIGURED'?'The sensor is reporting distance. Measure the tank before enabling water-depth decisions.':'A valid configured depth is needed to display the water level. Check the instrument message above.';$('tank-legend').textContent=p.levelValid?(p.allowed?'Permission allowed':'Permission blocked'):'No accepted level';$('sensor-label').textContent=(config.sensor||'MB7389')+' · '+(config.platform||'Uno');$('input-label').textContent=config.input||'USB serial · 115200 baud';for(const [id,key]of [['cfg-height','height'],['cfg-max','max_depth'],['cfg-trip','trip'],['cfg-restart','restart'],['cfg-high','high']])$(id).textContent=Number(config[key])>0?config[key]+' mm':'Not set';$('config-tag').textContent=config.calibrated==='1'?(config.storage==='EEPROM'?'CONFIGURED · EEPROM':'FIRMWARE CONFIGURED'):config.calibrated==='0'?'NOT CONFIGURED':'METADATA UNAVAILABLE';$('sample-count').textContent=sampleEvents.toLocaleString()+' sample events';$('retained').textContent=rows.length.toLocaleString()+' records retained';$('export').disabled=!rows.length||source==='sample';$('connect').textContent=connecting?'Connecting…':port?'Disconnect':'↗ Connect Arduino';$('sample').textContent=source==='sample'?'Stop illustration':'Try illustrative data';drawChart();}
-function drawChart(){const mode=$('chart-mode').value;$('chart-label').textContent=mode==='raw_mm'?'Sensor distance':'Accepted water depth';const svg=$('chart');const end=points.at(-1)?.uptime_ms||0;const recent=points.filter(r=>r.uptime_ms>=end-60000);const valid=r=>mode==='raw_mm'?r.raw_mm>Number(config.min_distance||300)&&r.raw_mm<=Number(config.max_distance||4999):presentation(r,config).levelValid;const values=recent.filter(valid).map(r=>r[mode]);if(!values.length){svg.innerHTML='<text x="330" y="120" text-anchor="middle">'+(latest?'No usable readings in this chart range':'Connect a sensor or import a recorded log')+'</text>';return;}let lo=Math.max(0,Math.floor(Math.min(...values)/100)*100-50),hi=Math.ceil(Math.max(...values)/100)*100+50;if(hi-lo<200)hi=lo+200;const x=t=>55+(t-Math.max(0,end-60000))/60000*580,y=v=>195-(v-lo)/(hi-lo)*165;let markup='<defs><linearGradient id="area" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#74b49d" stop-opacity=".24"/><stop offset="100%" stop-color="#74b49d" stop-opacity="0"/></linearGradient></defs>';for(let i=0;i<=4;i++){const val=lo+(hi-lo)*i/4,Y=y(val);markup+=`<line x1="55" y1="${Y}" x2="635" y2="${Y}" stroke="#edf0e8"/><text x="43" y="${Y+4}" text-anchor="end">${Math.round(val)}</text>`;}let paths=[],segment=[],previous=null;for(const r of recent){if(!valid(r)||(previous&&r.uptime_ms-previous.uptime_ms>2000)){if(segment.length)paths.push(segment);segment=[];}if(valid(r))segment.push([x(r.uptime_ms),y(r[mode])]);previous=r;}if(segment.length)paths.push(segment);for(const part of paths){const d=part.map(([X,Y],i)=>(i?'L':'M')+X.toFixed(1)+','+Y.toFixed(1)).join(' ');if(part.length>1)markup+=`<path d="${d} L${part.at(-1)[0]},195 L${part[0][0]},195 Z" fill="url(#area)"/>`;markup+=`<path d="${d}" fill="none" stroke="#428b73" stroke-width="2"/>`;if(part.length===1)markup+=`<circle cx="${part[0][0]}" cy="${part[0][1]}" r="3" fill="#428b73"/>`;}for(let i=0;i<=4;i++)markup+=`<text x="${55+i*145}" y="220" text-anchor="middle">${(Math.max(0,end-60000)/1000+i*15).toFixed(0)}s</text>`;svg.innerHTML=markup;}
-async function disconnect(){if(pendingSave)finishSave('Disconnected before confirmation. Reconnect and check the active settings before retrying.');closing=true;if(sampleTimer){clearInterval(sampleTimer);sampleTimer=null;}if(reader)try{await reader.cancel();}catch{}if(readTask)try{await readTask;}catch{}if(port)try{await port.close();}catch{}port=null;reader=null;readTask=null;closing=false;if(source==='live'){source='none';event('USB connection closed.');}render();}
-$('connect').onclick=async()=>{if(connecting)return;if(port){await disconnect();return;}if(!('serial'in navigator)){event('Web Serial unavailable. Open in desktop Chrome or Edge.');uiError='Open the dashboard in desktop Chrome or Edge. The embedded preview may not expose USB serial. You can still import a log.';render();return;}uiError='';connecting=true;render();try{const selected=await navigator.serial.requestPort();await disconnect();await selected.open({baudRate:115200});port=selected;emptyData();source='live';setTimeout(()=>{if(port&&source==='live'&&config.usb_cal!=='2')sendUsb('CAL?').catch(()=>{});},1800);event('USB opened at 115200 baud. Waiting for the Uno.');readTask=(async()=>{const decoder=new TextDecoder();let buffer='';try{reader=port.readable.getReader();while(!closing){const {value,done}=await reader.read();if(done)break;buffer+=decoder.decode(value,{stream:true});let index;while((index=buffer.indexOf('\n'))>=0){ingest(buffer.slice(0,index).replace(/\r$/,''));buffer=buffer.slice(index+1);}if(buffer.length>8192)buffer='';}}catch(err){if(!closing)event('Serial read stopped: '+err.message);}finally{reader?.releaseLock();reader=null;if(!closing){try{await port?.close();}catch{}port=null;event('Device disconnected. Last readings are historical.');lastReceive=0;render();}}})();}catch(err){if(err.name!=='NotFoundError'){uiError='Could not connect: '+err.message+'. Close other serial monitors and retry.';event(uiError);}}finally{connecting=false;render();}};
-$('import-file').onchange=async e=>{const file=e.target.files[0];if(!file)return;if(file.size>15*1024*1024){event('Log exceeds 15 MB. Import a smaller experiment file.');return;}const text=await file.text();await disconnect();emptyData();source='replay';importing=true;try{for(const line of text.split(/\r?\n/))ingest(line);}finally{importing=false;}if(!rows.length)event('No matching firmware CSV records found.');else event('Imported '+rows.length+' records from '+file.name);render();e.target.value='';};
-$('export').onclick=()=>{if(source==='sample')return;const keys=['host_receive_time_utc','session',...FIELDS];const csv=[keys.join(','),...rows.map(r=>keys.map(k=>r[k]).join(','))].join('\n');const url=URL.createObjectURL(new Blob([csv],{type:'text/csv'}));const a=document.createElement('a');a.href=url;a.download=`farmbot-${source}-${new Date().toISOString().replace(/[:.]/g,'-')}.csv`;a.click();URL.revokeObjectURL(url);};
-$('clear').onclick=()=>{emptyData();events=[];$('events').replaceChildren();event('View cleared. Firmware configuration is unchanged; reconnect to receive its banner.');render();};
-$('sample').onclick=async()=>{if(source==='sample'){await disconnect();source='none';emptyData();render();return;}await disconnect();emptyData();source='sample';ingest('# water-monitor,v1,platform=uno,sensor=HRXL,input=ILLUSTRATIVE,calibrated=1,height=1500,max_depth=1000,trip=200,restart=300,high=900,min_distance=300,max_distance=4999,timeout=1000,recovery=5');let n=0;sampleTimer=setInterval(()=>{const depth=Math.round(550+170*Math.sin(n/35));const distance=1500-depth;ingest(`${n*150},${n},1,0,${distance},${distance},${depth},${Math.floor(depth/10)},0,VALID,1,READY,0`);n++;},150);event('Illustration started. All readings in this mode are synthetic.');render();};
-$('chart-mode').onchange=drawChart;setInterval(render,500);render();
-
-function renderCalibration(){
-  if(pendingSave&&Date.now()-pendingSave.started>6000)finishSave('No save confirmation received. Reconnect and check active settings; do not assume it failed or succeeded.');
-  $('cal-save').disabled=!calibration||!!pendingSave||usbWriting||source!=='live'||!port||config.usb_cal!=='2';
-  if(!pendingSave&&config.usb_cal!=='2')$('cal-save-status').textContent='Upload the updated firmware once to enable direct USB calibration.';
-  else if(!pendingSave&&$('cal-save-status').textContent.startsWith('Upload the updated firmware'))$('cal-save-status').textContent='USB calibration supported. Review your measurements, then save to Arduino.';
-  $('cal-preview').hidden=!calibration;
-  if(!calibration)return;
-  const r=calculation.tick(source==='live'?Date.now():latest?.uptime_ms||0);
-  const active=source==='live'&&!!port;
-  const label=source==='sample'?'Illustrative data — preview disabled':source==='replay'?'Recorded calculation · '+r.label:!active?'Connect live USB to preview':r.label;
-  $('cal-state').textContent=label;
-  $('cal-state').className=active&&['LOW WATER','HIGH WATER'].includes(r.label)?'bad':'';
-  $('cal-measurement').textContent=r.valid&&source!=='sample'&&(active||source==='replay')?`${r.depth} mm water depth · ${r.percent}% of maximum depth`:'No accepted preview depth';
-  $('cal-fill').style.width=r.valid&&source!=='sample'&&(active||source==='replay')?r.percent+'%':'0%';
-  $('cal-clearance').textContent=`Air gap at maximum fill: ${calibration.height-calibration.max_depth} mm. Preview: five-sample median, immediate raw low-water trip, five-sample recovery, 1 s freshness limit.`;
-  if(active&&label!==calLastState){event('Browser calibration preview: '+label);calLastState=label;}
+import {
+  validateCalibration,
+  CalibrationPreview,
+  generateConfig,
+  savedCalibrationMatches,
+} from "./calibration.mjs?v=high-20261019";
+import { FIELDS, parseLine, presentation } from "./core.mjs?v=high-20261019";
+let pendingSave = null,
+  saveAck = false,
+  usbWriting = false;
+const $ = (id) => document.getElementById(id);
+let calibration = null,
+  calculation = null,
+  calLastState = "";
+let port = null,
+  reader = null,
+  readTask = null,
+  closing = false,
+  connecting = false;
+let rows = [],
+  points = [],
+  config = {},
+  header = null,
+  latest = null,
+  lastReceive = 0,
+  source = "none",
+  sampleTimer = null,
+  events = [],
+  lastKey = "",
+  session = 0,
+  rawLines = [],
+  sampleEvents = 0,
+  importing = false,
+  uiError = "";
+$("date").textContent = new Intl.DateTimeFormat("en-AU", {
+  day: "numeric",
+  month: "short",
+  year: "numeric",
+}).format(new Date());
+function event(text) {
+  if (importing) return;
+  events.unshift({
+    time: new Date().toLocaleTimeString("en-AU", { hour12: false }),
+    text,
+  });
+  events = events.slice(0, 60);
+  $("events").replaceChildren(
+    ...events.map((e) => {
+      const el = document.createElement("div");
+      el.className = "event";
+      const time = document.createElement("span");
+      time.className = "event-time";
+      time.textContent = e.time;
+      const dot = document.createElement("span");
+      dot.className = "event-dot";
+      const text = document.createElement("span");
+      text.textContent = e.text;
+      el.append(time, dot, text);
+      return el;
+    }),
+  );
 }
-$('calibration-form').onsubmit=e=>{
+function emptyData() {
+  calculation?.reset();
+  events = [];
+  $("events").replaceChildren();
+  rows = [];
+  points = [];
+  config = {};
+  header = null;
+  latest = null;
+  lastReceive = 0;
+  lastKey = "";
+  sampleEvents = 0;
+  rawLines = [];
+  session = 0;
+}
+function ingest(line) {
+  if (source === "live" && line.trim() === "# cal,saved" && pendingSave)
+    saveAck = true;
+  if (source === "live" && line.startsWith("# cal,error,"))
+    finishSave("Arduino rejected calibration: " + line.slice(12));
+  rawLines.push(line);
+  rawLines = rawLines.slice(-18);
+  $("raw").textContent = rawLines.join("\n");
+  const packet = parseLine(line, header);
+  if (!packet) return;
+  if (packet.type === "header") {
+    header = packet.header;
+    return;
+  }
+  if (packet.type === "config") {
+    if (pendingSave) {
+      const c = packet.config;
+      if (savedCalibrationMatches(c, pendingSave.values, saveAck))
+        finishSave(
+          "Saved to Arduino EEPROM and confirmed. Main readings and L LED now use these settings.",
+        );
+      else
+        finishSave(
+          "Save was not confirmed. Check active firmware settings and retry.",
+        );
+    }
+    config = packet.config;
+    calculation?.reset();
+    session++;
+    points = [];
+    latest = null;
+    event("Active device configuration received · chart restarted.");
+    render();
+    return;
+  }
+  const row = packet.row;
+  if (latest && row.uptime_ms < latest.uptime_ms) {
+    session++;
+    points = [];
+    calculation?.reset();
+    event("Device uptime reset · starting a new chart session.");
+  }
+  latest = row;
+  lastReceive = Date.now();
+  if (calculation)
+    calculation.update(row, source === "live" ? lastReceive : row.uptime_ms);
+  rows.push({
+    ...row,
+    host_receive_time_utc: new Date().toISOString(),
+    session,
+  });
+  if (rows.length > 10000) rows.shift();
+  if (row.sample_event) {
+    sampleEvents++;
+    points.push(row);
+    points = points.slice(-1200);
+  }
+  const key = [
+    row.validity,
+    row.reason,
+    row.raw_mm <= Number(config.min_distance || 300)
+      ? "close"
+      : row.raw_mm > Number(config.max_distance || 4999)
+        ? "no-target"
+        : "range",
+  ].join("/");
+  if (key !== lastKey) {
+    const p = presentation(row, config);
+    event(p.title);
+    lastKey = key;
+  }
+  render();
+}
+function render() {
+  if (importing) return;
+  renderCalibration();
+  const fresh =
+    source === "replay" ||
+    source === "sample" ||
+    (source === "live" &&
+      !!port &&
+      !!lastReceive &&
+      Date.now() - lastReceive < 2000);
+  const p = presentation(latest, config, fresh);
+  $("notice").className =
+    "notice " + (p.kind === "good" || p.kind === "idle" ? "" : p.kind);
+  $("notice-title").textContent = p.title;
+  $("notice-text").textContent = p.text;
+  if (uiError) {
+    $("notice-title").textContent = "Connection needs attention";
+    $("notice-text").textContent = uiError;
+  }
+  $("connection").textContent =
+    source === "live"
+      ? port
+        ? fresh && latest
+          ? "LIVE USB"
+          : "WAITING FOR DATA"
+        : "DISCONNECTED"
+      : source === "replay"
+        ? "RECORDED LOG"
+        : source === "sample"
+          ? "ILLUSTRATION"
+          : "DISCONNECTED";
+  $("source-banner").hidden = !["replay", "sample"].includes(source);
+  $("source-banner").textContent =
+    source === "sample"
+      ? "ILLUSTRATIVE DATA · Synthetic readings for exploring the interface. These are not your measurements."
+      : "RECORDED LOG · Historical readings, not a live connection. Connect Arduino to resume live monitoring.";
+  $("distance").textContent = latest?.raw_mm
+    ? latest.raw_mm.toLocaleString()
+    : "—";
+  $("distance-note").textContent = !latest
+    ? "Waiting for a measurement"
+    : !fresh
+      ? "Last reported distance · live data expired"
+      : latest?.sample_event
+        ? "Distance from sensing face to target"
+        : "Waiting for a measurement";
+  $("depth").textContent = p.levelValid
+    ? latest.depth_mm.toLocaleString()
+    : "—";
+  $("depth-note").textContent = p.levelValid
+    ? "Accepted depth above the bottom datum"
+    : "No valid configured depth available";
+  $("permission").textContent = !latest
+    ? "Not available"
+    : !fresh
+      ? "Unavailable"
+      : p.allowed
+        ? "Allowed"
+        : latest.validity === "UNCONFIGURED"
+          ? "Disabled"
+          : "Blocked";
+  $("permission").className =
+    "metric-value word " + (p.allowed ? "good" : latest ? "bad" : "muted");
+  $("age").textContent =
+    latest && latest.sample_age_ms >= 0
+      ? latest.sample_age_ms.toLocaleString()
+      : "—";
+  $("age-note").textContent = !latest
+    ? "Age of last firmware-accepted sample"
+    : fresh
+      ? "Age of last firmware-accepted sample"
+      : "Last reported age · live data expired";
+  $("validity").textContent = latest?.validity || "NO DATA";
+  $("level").textContent = p.levelValid ? latest.depth_percent + "%" : "—";
+  $("level-label").textContent = p.levelValid
+    ? "OF MAXIMUM DEPTH"
+    : latest?.validity === "UNCONFIGURED"
+      ? "LEVEL NOT CONFIGURED"
+      : "NO VALID LEVEL";
+  $("water").style.height = p.levelValid ? latest.depth_percent + "%" : "0%";
+  $("tank-state").textContent =
+    p.levelValid && latest.reason === "HIGH"
+      ? "HIGH WATER"
+      : p.allowed
+        ? "Water available"
+        : !fresh && latest
+          ? "Data unavailable"
+          : latest?.validity === "UNCONFIGURED"
+            ? "Calibration needed"
+            : p.levelValid
+              ? "Watering blocked"
+              : latest
+                ? "Check measurement"
+                : "Waiting for data";
+  $("tank-description").textContent = p.levelValid
+    ? "Depth percentage describes water height, not litres. Permission is the local monitoring decision."
+    : latest?.validity === "UNCONFIGURED"
+      ? "The sensor is reporting distance. Measure the tank before enabling water-depth decisions."
+      : "A valid configured depth is needed to display the water level. Check the instrument message above.";
+  $("tank-legend").textContent = p.levelValid
+    ? p.allowed
+      ? "Permission allowed"
+      : "Permission blocked"
+    : "No accepted level";
+  $("sensor-label").textContent =
+    (config.sensor || "MB7389") + " · " + (config.platform || "Uno");
+  $("input-label").textContent = config.input || "USB serial · 115200 baud";
+  for (const [id, key] of [
+    ["cfg-height", "height"],
+    ["cfg-max", "max_depth"],
+    ["cfg-trip", "trip"],
+    ["cfg-restart", "restart"],
+    ["cfg-high", "high"],
+  ])
+    $(id).textContent =
+      Number(config[key]) > 0 ? config[key] + " mm" : "Not set";
+  $("config-tag").textContent =
+    config.calibrated === "1"
+      ? config.storage === "EEPROM"
+        ? "CONFIGURED · EEPROM"
+        : "FIRMWARE CONFIGURED"
+      : config.calibrated === "0"
+        ? "NOT CONFIGURED"
+        : "METADATA UNAVAILABLE";
+  $("sample-count").textContent =
+    sampleEvents.toLocaleString() + " sample events";
+  $("retained").textContent =
+    rows.length.toLocaleString() + " records retained";
+  $("export").disabled = !rows.length || source === "sample";
+  $("connect").textContent = connecting
+    ? "Connecting…"
+    : port
+      ? "Disconnect"
+      : "↗ Connect Arduino";
+  $("sample").textContent =
+    source === "sample" ? "Stop illustration" : "Try illustrative data";
+  drawChart();
+}
+function drawChart() {
+  const mode = $("chart-mode").value;
+  $("chart-label").textContent =
+    mode === "raw_mm" ? "Sensor distance" : "Accepted water depth";
+  const svg = $("chart");
+  const end = points.at(-1)?.uptime_ms || 0;
+  const recent = points.filter((r) => r.uptime_ms >= end - 60000);
+  const valid = (r) =>
+    mode === "raw_mm"
+      ? r.raw_mm > Number(config.min_distance || 300) &&
+        r.raw_mm <= Number(config.max_distance || 4999)
+      : presentation(r, config).levelValid;
+  const values = recent.filter(valid).map((r) => r[mode]);
+  if (!values.length) {
+    svg.innerHTML =
+      '<text x="330" y="120" text-anchor="middle">' +
+      (latest
+        ? "No usable readings in this chart range"
+        : "Connect a sensor or import a recorded log") +
+      "</text>";
+    return;
+  }
+  let lo = Math.max(0, Math.floor(Math.min(...values) / 100) * 100 - 50),
+    hi = Math.ceil(Math.max(...values) / 100) * 100 + 50;
+  if (hi - lo < 200) hi = lo + 200;
+  const x = (t) => 55 + ((t - Math.max(0, end - 60000)) / 60000) * 580,
+    y = (v) => 195 - ((v - lo) / (hi - lo)) * 165;
+  let markup =
+    '<defs><linearGradient id="area" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#74b49d" stop-opacity=".24"/><stop offset="100%" stop-color="#74b49d" stop-opacity="0"/></linearGradient></defs>';
+  for (let i = 0; i <= 4; i++) {
+    const val = lo + ((hi - lo) * i) / 4,
+      Y = y(val);
+    markup += `<line x1="55" y1="${Y}" x2="635" y2="${Y}" stroke="#edf0e8"/><text x="43" y="${Y + 4}" text-anchor="end">${Math.round(val)}</text>`;
+  }
+  let paths = [],
+    segment = [],
+    previous = null;
+  for (const r of recent) {
+    if (!valid(r) || (previous && r.uptime_ms - previous.uptime_ms > 2000)) {
+      if (segment.length) paths.push(segment);
+      segment = [];
+    }
+    if (valid(r)) segment.push([x(r.uptime_ms), y(r[mode])]);
+    previous = r;
+  }
+  if (segment.length) paths.push(segment);
+  for (const part of paths) {
+    const d = part
+      .map(([X, Y], i) => (i ? "L" : "M") + X.toFixed(1) + "," + Y.toFixed(1))
+      .join(" ");
+    if (part.length > 1)
+      markup += `<path d="${d} L${part.at(-1)[0]},195 L${part[0][0]},195 Z" fill="url(#area)"/>`;
+    markup += `<path d="${d}" fill="none" stroke="#428b73" stroke-width="2"/>`;
+    if (part.length === 1)
+      markup += `<circle cx="${part[0][0]}" cy="${part[0][1]}" r="3" fill="#428b73"/>`;
+  }
+  for (let i = 0; i <= 4; i++)
+    markup += `<text x="${55 + i * 145}" y="220" text-anchor="middle">${(Math.max(0, end - 60000) / 1000 + i * 15).toFixed(0)}s</text>`;
+  svg.innerHTML = markup;
+}
+async function disconnect() {
+  if (pendingSave)
+    finishSave(
+      "Disconnected before confirmation. Reconnect and check the active settings before retrying.",
+    );
+  closing = true;
+  if (sampleTimer) {
+    clearInterval(sampleTimer);
+    sampleTimer = null;
+  }
+  if (reader)
+    try {
+      await reader.cancel();
+    } catch {}
+  if (readTask)
+    try {
+      await readTask;
+    } catch {}
+  if (port)
+    try {
+      await port.close();
+    } catch {}
+  port = null;
+  reader = null;
+  readTask = null;
+  closing = false;
+  if (source === "live") {
+    source = "none";
+    event("USB connection closed.");
+  }
+  render();
+}
+$("connect").onclick = async () => {
+  if (connecting) return;
+  if (port) {
+    await disconnect();
+    return;
+  }
+  if (!("serial" in navigator)) {
+    event("Web Serial unavailable. Open in desktop Chrome or Edge.");
+    uiError =
+      "Open the dashboard in desktop Chrome or Edge. The embedded preview may not expose USB serial. You can still import a log.";
+    render();
+    return;
+  }
+  uiError = "";
+  connecting = true;
+  render();
+  try {
+    const selected = await navigator.serial.requestPort();
+    await disconnect();
+    await selected.open({ baudRate: 115200 });
+    port = selected;
+    emptyData();
+    source = "live";
+    setTimeout(() => {
+      if (port && source === "live" && config.usb_cal !== "2")
+        sendUsb("CAL?").catch(() => {});
+    }, 1800);
+    event("USB opened at 115200 baud. Waiting for the Uno.");
+    readTask = (async () => {
+      const decoder = new TextDecoder();
+      let buffer = "";
+      try {
+        reader = port.readable.getReader();
+        while (!closing) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          let index;
+          while ((index = buffer.indexOf("\n")) >= 0) {
+            ingest(buffer.slice(0, index).replace(/\r$/, ""));
+            buffer = buffer.slice(index + 1);
+          }
+          if (buffer.length > 8192) buffer = "";
+        }
+      } catch (err) {
+        if (!closing) event("Serial read stopped: " + err.message);
+      } finally {
+        reader?.releaseLock();
+        reader = null;
+        if (!closing) {
+          try {
+            await port?.close();
+          } catch {}
+          port = null;
+          event("Device disconnected. Last readings are historical.");
+          lastReceive = 0;
+          render();
+        }
+      }
+    })();
+  } catch (err) {
+    if (err.name !== "NotFoundError") {
+      uiError =
+        "Could not connect: " +
+        err.message +
+        ". Close other serial monitors and retry.";
+      event(uiError);
+    }
+  } finally {
+    connecting = false;
+    render();
+  }
+};
+$("import-file").onchange = async (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+  if (file.size > 15 * 1024 * 1024) {
+    event("Log exceeds 15 MB. Import a smaller experiment file.");
+    return;
+  }
+  const text = await file.text();
+  await disconnect();
+  emptyData();
+  source = "replay";
+  importing = true;
+  try {
+    for (const line of text.split(/\r?\n/)) ingest(line);
+  } finally {
+    importing = false;
+  }
+  if (!rows.length) event("No matching firmware CSV records found.");
+  else event("Imported " + rows.length + " records from " + file.name);
+  render();
+  e.target.value = "";
+};
+$("export").onclick = () => {
+  if (source === "sample") return;
+  const keys = ["host_receive_time_utc", "session", ...FIELDS];
+  const csv = [
+    keys.join(","),
+    ...rows.map((r) => keys.map((k) => r[k]).join(",")),
+  ].join("\n");
+  const url = URL.createObjectURL(new Blob([csv], { type: "text/csv" }));
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `farmbot-${source}-${new Date().toISOString().replace(/[:.]/g, "-")}.csv`;
+  a.click();
+  URL.revokeObjectURL(url);
+};
+$("clear").onclick = () => {
+  emptyData();
+  events = [];
+  $("events").replaceChildren();
+  event(
+    "View cleared. Firmware configuration is unchanged; reconnect to receive its banner.",
+  );
+  render();
+};
+$("sample").onclick = async () => {
+  if (source === "sample") {
+    await disconnect();
+    source = "none";
+    emptyData();
+    render();
+    return;
+  }
+  await disconnect();
+  emptyData();
+  source = "sample";
+  ingest(
+    "# water-monitor,v1,platform=uno,sensor=HRXL,input=ILLUSTRATIVE,calibrated=1,height=1500,max_depth=1000,trip=200,restart=300,high=900,min_distance=300,max_distance=4999,timeout=1000,recovery=5",
+  );
+  let n = 0;
+  sampleTimer = setInterval(() => {
+    const depth = Math.round(550 + 170 * Math.sin(n / 35));
+    const distance = 1500 - depth;
+    ingest(
+      `${n * 150},${n},1,0,${distance},${distance},${depth},${Math.floor(depth / 10)},0,VALID,1,READY,0`,
+    );
+    n++;
+  }, 150);
+  event("Illustration started. All readings in this mode are synthetic.");
+  render();
+};
+$("chart-mode").onchange = drawChart;
+setInterval(render, 500);
+render();
+
+function renderCalibration() {
+  if (pendingSave && Date.now() - pendingSave.started > 6000)
+    finishSave(
+      "No save confirmation received. Reconnect and check active settings; do not assume it failed or succeeded.",
+    );
+  $("cal-save").disabled =
+    !calibration ||
+    !!pendingSave ||
+    usbWriting ||
+    source !== "live" ||
+    !port ||
+    config.usb_cal !== "2";
+  if (!pendingSave && config.usb_cal !== "2")
+    $("cal-save-status").textContent =
+      "Upload the updated firmware once to enable direct USB calibration.";
+  else if (
+    !pendingSave &&
+    $("cal-save-status").textContent.startsWith("Upload the updated firmware")
+  )
+    $("cal-save-status").textContent =
+      "USB calibration supported. Review your measurements, then save to Arduino.";
+  $("cal-preview").hidden = !calibration;
+  if (!calibration) return;
+  const r = calculation.tick(
+    source === "live" ? Date.now() : latest?.uptime_ms || 0,
+  );
+  const active = source === "live" && !!port;
+  const label =
+    source === "sample"
+      ? "Illustrative data — preview disabled"
+      : source === "replay"
+        ? "Recorded calculation · " + r.label
+        : !active
+          ? "Connect live USB to preview"
+          : r.label;
+  $("cal-state").textContent = label;
+  $("cal-state").className =
+    active && ["LOW WATER", "HIGH WATER"].includes(r.label) ? "bad" : "";
+  $("cal-measurement").textContent =
+    r.valid && source !== "sample" && (active || source === "replay")
+      ? `${r.depth} mm water depth · ${r.percent}% of maximum depth`
+      : "No accepted preview depth";
+  $("cal-fill").style.width =
+    r.valid && source !== "sample" && (active || source === "replay")
+      ? r.percent + "%"
+      : "0%";
+  $("cal-clearance").textContent =
+    `Air gap at maximum fill: ${calibration.height - calibration.max_depth} mm. Preview: five-sample median, immediate raw low-water trip, five-sample recovery, 1 s freshness limit.`;
+  if (active && label !== calLastState) {
+    event("Browser calibration preview: " + label);
+    calLastState = label;
+  }
+}
+$("calibration-form").onsubmit = (e) => {
   e.preventDefault();
-  const values={height:$('cal-height').value,max_depth:$('cal-max').value,trip:$('cal-trip').value,restart:$('cal-restart').value,high:$('cal-high').value};
-  const result=validateCalibration(values);
-  $('cal-feedback').textContent=result.errors.length?result.errors.join(' '):'Applied to browser preview. Save to Arduino to update its monitoring decisions.';
-  $('cal-feedback').className=result.errors.length?'bad':'good';
-  if(result.errors.length)return;
-  
-  calibration=result.config;calculation=new CalibrationPreview(calibration);calLastState='';
+  const values = {
+    height: $("cal-height").value,
+    max_depth: $("cal-max").value,
+    trip: $("cal-trip").value,
+    restart: $("cal-restart").value,
+    high: $("cal-high").value,
+  };
+  const result = validateCalibration(values);
+  $("cal-feedback").textContent = result.errors.length
+    ? result.errors.join(" ")
+    : "Applied to browser preview. Save to Arduino to update its monitoring decisions.";
+  $("cal-feedback").className = result.errors.length ? "bad" : "good";
+  if (result.errors.length) return;
+
+  calibration = result.config;
+  calculation = new CalibrationPreview(calibration);
+  calLastState = "";
   // Do not treat old data as a new live sample. Replay can be recalculated explicitly.
-  if(source==='replay')for(const row of points)calculation.update(row,row.uptime_ms);
-  event('Measured tank settings applied to browser preview. Firmware settings unchanged.');render();
+  if (source === "replay")
+    for (const row of points) calculation.update(row, row.uptime_ms);
+  event(
+    "Measured tank settings applied to browser preview. Firmware settings unchanged.",
+  );
+  render();
 };
-$('cal-reset').onclick=()=>{calibration=null;calculation=null;$('cal-feedback').textContent='Browser preview disabled. Firmware settings unchanged.';render();};
-$('cal-download').onclick=()=>{
-  if(!calibration)return;
-  const url=URL.createObjectURL(new Blob([generateConfig(calibration)],{type:'text/plain'}));
-  const a=document.createElement('a');a.href=url;a.download='config.h';a.click();URL.revokeObjectURL(url);
+$("cal-reset").onclick = () => {
+  calibration = null;
+  calculation = null;
+  $("cal-feedback").textContent =
+    "Browser preview disabled. Firmware settings unchanged.";
+  render();
+};
+$("cal-download").onclick = () => {
+  if (!calibration) return;
+  const url = URL.createObjectURL(
+    new Blob([generateConfig(calibration)], { type: "text/plain" }),
+  );
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = "config.h";
+  a.click();
+  URL.revokeObjectURL(url);
 };
 
-for(const id of ['cal-height','cal-max','cal-trip','cal-restart','cal-high'])$(id).addEventListener('input',()=>{
-  
-  calibration=null;calculation=null;$('cal-feedback').textContent='Settings changed. Click Start monitoring to apply.';render();
-});
+for (const id of [
+  "cal-height",
+  "cal-max",
+  "cal-trip",
+  "cal-restart",
+  "cal-high",
+])
+  $(id).addEventListener("input", () => {
+    calibration = null;
+    calculation = null;
+    $("cal-feedback").textContent =
+      "Settings changed. Click Start monitoring to apply.";
+    render();
+  });
 
-async function sendUsb(command){
-  if(!port?.writable||usbWriting)throw new Error('USB is unavailable or busy');
-  usbWriting=true;let writer;
-  try{writer=port.writable.getWriter();await writer.write(new TextEncoder().encode(command+'\n'));}finally{writer?.releaseLock();usbWriting=false;}
+async function sendUsb(command) {
+  if (!port?.writable || usbWriting)
+    throw new Error("USB is unavailable or busy");
+  usbWriting = true;
+  let writer;
+  try {
+    writer = port.writable.getWriter();
+    await writer.write(new TextEncoder().encode(command + "\n"));
+  } finally {
+    writer?.releaseLock();
+    usbWriting = false;
+  }
 }
-function finishSave(message){pendingSave=null;saveAck=false;$('cal-save-status').textContent=message;event(message);}
-$('cal-save').onclick=async()=>{
-  if(!calibration||pendingSave||config.usb_cal!=='2'||source!=='live'||!port)return;
-  const checked=validateCalibration(calibration);if(checked.errors.length)return;
-  pendingSave={values:{...checked.config},started:Date.now()};saveAck=false;
-  $('cal-save-status').textContent='Saving… waiting for Arduino EEPROM verification and active settings.';render();
-  try{await sendUsb('CAL,SAVE,'+['height','max_depth','trip','restart','high'].map(k=>checked.config[k]).join(','));}
-  catch(err){finishSave('Could not send calibration: '+err.message);}
+function finishSave(message) {
+  pendingSave = null;
+  saveAck = false;
+  $("cal-save-status").textContent = message;
+  event(message);
+}
+$("cal-save").onclick = async () => {
+  if (
+    !calibration ||
+    pendingSave ||
+    config.usb_cal !== "2" ||
+    source !== "live" ||
+    !port
+  )
+    return;
+  const checked = validateCalibration(calibration);
+  if (checked.errors.length) return;
+  pendingSave = { values: { ...checked.config }, started: Date.now() };
+  saveAck = false;
+  $("cal-save-status").textContent =
+    "Saving… waiting for Arduino EEPROM verification and active settings.";
+  render();
+  try {
+    await sendUsb(
+      "CAL,SAVE," +
+        ["height", "max_depth", "trip", "restart", "high"]
+          .map((k) => checked.config[k])
+          .join(","),
+    );
+  } catch (err) {
+    finishSave("Could not send calibration: " + err.message);
+  }
   render();
 };

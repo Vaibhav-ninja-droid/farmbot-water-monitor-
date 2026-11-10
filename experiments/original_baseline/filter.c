@@ -6,8 +6,7 @@ static uint32_t samples[FILTER_SIZE];
 static uint32_t index_pos;
 static uint32_t sample_count;
 
-void filter_init(void)
-{
+void filter_init(void) {
     index_pos = 0;
     sample_count = 0;
 
@@ -16,8 +15,7 @@ void filter_init(void)
     }
 }
 
-uint32_t filter_add_sample(uint32_t sample)
-{
+uint32_t filter_add_sample(uint32_t sample) {
     samples[index_pos] = sample;
 
     index_pos = (index_pos + 1) % FILTER_SIZE;

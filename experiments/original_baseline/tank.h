@@ -3,13 +3,7 @@
 
 #include <stdint.h>
 
-enum tank_state {
-    TANK_EMPTY,
-    TANK_LOW,
-    TANK_OK,
-    TANK_FULL,
-    TANK_ERROR
-};
+enum tank_state { TANK_EMPTY, TANK_LOW, TANK_OK, TANK_FULL, TANK_ERROR };
 
 struct tank_measurement {
     uint32_t sensor_distance_mm;

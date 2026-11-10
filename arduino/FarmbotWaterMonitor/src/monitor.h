@@ -7,8 +7,18 @@
 enum sensor_profile { SENSOR_MB1000, SENSOR_HRXL };
 enum filter_mode { FILTER_RAW, FILTER_MEAN, FILTER_MEDIAN };
 enum monitor_validity { MON_UNKNOWN, MON_VALID, MON_INVALID, MON_STALE, MON_UNCONFIGURED };
-enum monitor_reason { REASON_STARTUP, REASON_READY, REASON_LOW, REASON_RECOVERING,
-    REASON_RANGE, REASON_PULSE, REASON_TIMEOUT, REASON_CONFIG, REASON_CAPTURE, REASON_HIGH };
+enum monitor_reason {
+    REASON_STARTUP,
+    REASON_READY,
+    REASON_LOW,
+    REASON_RECOVERING,
+    REASON_RANGE,
+    REASON_PULSE,
+    REASON_TIMEOUT,
+    REASON_CONFIG,
+    REASON_CAPTURE,
+    REASON_HIGH
+};
 struct monitor_config {
     enum sensor_profile sensor;
     enum filter_mode filter;
@@ -35,7 +45,8 @@ extern "C" {
 bool monitor_config_valid(const struct monitor_config *c);
 bool monitor_distance(enum sensor_profile profile, uint32_t pulse_us, int32_t offset, uint32_t *mm);
 void monitor_init(struct monitor *m, const struct monitor_config *c);
-void monitor_distance_sample(struct monitor *m, uint32_t distance_mm, uint64_t sample_ms, uint64_t now_ms);
+void monitor_distance_sample(struct monitor *m, uint32_t distance_mm, uint64_t sample_ms,
+                             uint64_t now_ms);
 void monitor_sample(struct monitor *m, uint32_t pulse_us, uint64_t sample_ms, uint64_t now_ms);
 void monitor_fault(struct monitor *m, enum monitor_reason reason);
 void monitor_tick(struct monitor *m, uint64_t now_ms);

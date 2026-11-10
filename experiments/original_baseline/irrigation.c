@@ -1,7 +1,6 @@
 #include "irrigation.h"
 
-bool irrigation_is_allowed(enum tank_state state)
-{
+bool irrigation_is_allowed(enum tank_state state) {
     switch (state) {
 
     case TANK_OK:
